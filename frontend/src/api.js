@@ -1,16 +1,84 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const LOCAL_PROXY_URL = 'http://127.0.0.1:8001'
+const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 
 export async function submitGame(youtubeUrl, label) {
-  const res = await fetch(`${API_URL}/process`, {
+  // Route YouTube downloads through the local proxy to avoid IP blocking
+  const res = await fetch(`${LOCAL_PROXY_URL}/process`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ youtube_url: youtubeUrl, label: label || undefined }),
-  })
-  if (!res.ok) {
+  }).catch(() => null)
+
+  if (!res || !res.ok) {
+    if (!res) {
+      throw new Error('Local proxy not running. Start it with: python local_proxy.py')
+    }
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `Server error ${res.status}`)
+    throw new Error(err.error || err.detail || `Server error ${res.status}`)
   }
-  return res.json()
+  const data = await res.json()
+  if (data.error) throw new Error(data.error)
+  return data
+}
+
+async function parseError(res) {
+  const err = await res.json().catch(() => ({}))
+  throw new Error(err.detail || err.error || `Server error ${res.status}`)
+}
+
+export async function uploadGame(file, label, onProgress) {
+  const initRes = await fetch(`${API_URL}/uploads/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filename: file.name,
+      label: label || undefined,
+      content_type: file.type || 'application/octet-stream',
+      total_size: file.size,
+    }),
+  })
+
+  if (!initRes.ok) {
+    await parseError(initRes)
+  }
+
+  const { job_id } = await initRes.json()
+  const totalChunks = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK_SIZE))
+
+  for (let index = 0; index < totalChunks; index += 1) {
+    const start = index * UPLOAD_CHUNK_SIZE
+    const end = Math.min(file.size, start + UPLOAD_CHUNK_SIZE)
+    const chunk = file.slice(start, end)
+    const url = new URL(`${API_URL}/uploads/${job_id}/chunk`)
+    url.searchParams.set('index', String(index))
+    url.searchParams.set('total_chunks', String(totalChunks))
+    url.searchParams.set('start_byte', String(start))
+
+    const chunkRes = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+      body: chunk,
+    })
+
+    if (!chunkRes.ok) {
+      await parseError(chunkRes)
+    }
+
+    onProgress?.(Math.round((end / file.size) * 100))
+  }
+
+  const completeRes = await fetch(`${API_URL}/uploads/${job_id}/complete`, {
+    method: 'POST',
+  })
+
+  if (!completeRes.ok) {
+    await parseError(completeRes)
+  }
+
+  return completeRes.json()
 }
 
 export async function fetchStatus(jobId) {

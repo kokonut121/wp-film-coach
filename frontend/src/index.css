@@ -308,6 +308,40 @@ body {
   margin: 0 auto;
 }
 
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.mode-toggle button {
+  flex: 1;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.mode-toggle button.active {
+  background: var(--cyan-dim);
+  color: var(--text-primary);
+}
+
+.mode-toggle button:hover:not(.active) {
+  background: var(--bg-card);
+}
+
+.input-group input[type="file"] {
+  cursor: pointer;
+}
+
 .input-group {
   position: relative;
   margin-bottom: 12px;
@@ -339,9 +373,17 @@ body {
   border-color: var(--evt-turnover);
 }
 
-.input-group .error-text {
-  position: absolute;
-  bottom: -20px;
+.hint-text {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.input-group .error-text,
+.submit-form > .error-text {
+  display: block;
+  margin-bottom: 8px;
   left: 4px;
   font-size: 0.72rem;
   color: var(--evt-turnover);
@@ -850,11 +892,13 @@ body {
   grid-template-rows: 1fr 1fr;
   gap: 1px;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   background: var(--border);
 }
 
 .dashboard-grid > .panel {
+  min-height: 0;
   border-radius: 0;
   border: none;
 }
@@ -934,6 +978,7 @@ body {
 .event-timeline-panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .event-timeline-panel .panel-body {
@@ -1002,10 +1047,28 @@ body {
 .chat-panel {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bottom-right-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.bottom-right-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px 16px;
   display: flex;

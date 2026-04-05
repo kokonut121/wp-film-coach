@@ -69,7 +69,8 @@ class TestSummarizeEvents:
 
 class TestGenerateReport:
     @patch("pipeline.agent.anthropic.Anthropic")
-    def test_returns_report_with_sections(self, mock_anthropic_class):
+    def test_returns_report_with_sections(self, mock_anthropic_class, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         mock_client = MagicMock()
         mock_anthropic_class.return_value = mock_client
 
@@ -101,7 +102,8 @@ class TestGenerateReport:
 
 class TestStreamChat:
     @patch("pipeline.agent.anthropic.Anthropic")
-    def test_yields_text_chunks(self, mock_anthropic_class):
+    def test_yields_text_chunks(self, mock_anthropic_class, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         mock_client = MagicMock()
         mock_anthropic_class.return_value = mock_client
 

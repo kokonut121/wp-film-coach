@@ -165,6 +165,17 @@ def summarize_events(events_json: dict) -> str:
 import numpy as np
 
 
+def _get_anthropic_client() -> anthropic.Anthropic:
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set in the Modal runtime. "
+            "Your local .env file is not automatically available to deployed Modal containers. "
+            "Add it as a Modal secret and redeploy."
+        )
+    return anthropic.Anthropic(api_key=api_key)
+
+
 def generate_report(events_summary: str) -> str:
     """Generate a tactical analysis report using Claude.
 
@@ -174,7 +185,7 @@ def generate_report(events_summary: str) -> str:
     Returns:
         Markdown-formatted report string.
     """
-    client = anthropic.Anthropic()
+    client = _get_anthropic_client()
 
     message = client.messages.create(
         model=MODEL,
@@ -201,7 +212,7 @@ def stream_chat(
     Yields:
         Text chunks of the Claude response.
     """
-    client = anthropic.Anthropic()
+    client = _get_anthropic_client()
 
     system = f"{SYSTEM_PROMPT}\n\nHere is the game data you are analysing:\n\n{events_summary}"
 

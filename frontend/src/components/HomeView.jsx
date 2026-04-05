@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { submitGame } from '../api'
+import { useState, useRef } from 'react'
+import { submitGame, uploadGame } from '../api'
 import GameHistory from './GameHistory'
 
 const URL_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]+/
@@ -7,24 +7,47 @@ const URL_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube
 export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) {
   const [url, setUrl] = useState('')
   const [label, setLabel] = useState('')
+  const [file, setFile] = useState(null)
+  const [mode, setMode] = useState('file') // 'url' | 'file'
   const [loading, setLoading] = useState(false)
+  const [uploadPct, setUploadPct] = useState(0)
   const [error, setError] = useState('')
+  const fileRef = useRef()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!URL_RE.test(url.trim())) {
-      setError('Enter a valid YouTube URL')
-      return
-    }
     setError('')
-    setLoading(true)
-    try {
-      const { job_id } = await submitGame(url.trim(), label.trim())
-      onSubmit(job_id, url.trim(), label.trim())
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+
+    if (mode === 'url') {
+      if (!URL_RE.test(url.trim())) {
+        setError('Enter a valid YouTube URL')
+        return
+      }
+      setLoading(true)
+      setUploadPct(0)
+      try {
+        const { job_id } = await submitGame(url.trim(), label.trim())
+        onSubmit(job_id, url.trim(), label.trim())
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        setLoading(false)
+      }
+    } else {
+      if (!file) {
+        setError('Select a video file')
+        return
+      }
+      setLoading(true)
+      setUploadPct(0)
+      try {
+        const { job_id } = await uploadGame(file, label.trim(), setUploadPct)
+        onSubmit(job_id, file.name, label.trim())
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
@@ -40,21 +63,40 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
           <span>water polo game</span>
         </h1>
         <p className="fade-in-delay-3">
-          Paste a YouTube link. Our computer vision pipeline detects players,
-          tracks formations, and generates tactical analysis — powered by AI.
+          Upload a game video or paste a YouTube link. Our CV pipeline detects
+          players, tracks formations, and generates tactical analysis — powered by AI.
         </p>
 
         <form className="submit-form fade-in-delay-4" onSubmit={handleSubmit}>
-          <div className={`input-group ${error ? 'error' : ''}`}>
-            <input
-              type="text"
-              placeholder="https://youtube.com/watch?v=..."
-              value={url}
-              onChange={(e) => { setUrl(e.target.value); setError(''); }}
-              autoFocus
-            />
-            {error && <span className="error-text">{error}</span>}
+          <div className="mode-toggle">
+            <button type="button" className={mode === 'file' ? 'active' : ''} onClick={() => { setMode('file'); setError('') }}>Upload Video</button>
+            <button type="button" className={mode === 'url' ? 'active' : ''} onClick={() => { setMode('url'); setError('') }}>YouTube URL</button>
           </div>
+          {mode === 'file' ? (
+            <div className={`input-group ${error ? 'error' : ''}`}>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="video/*"
+                onChange={(e) => { setFile(e.target.files[0] || null); setError(''); }}
+              />
+            </div>
+          ) : (
+            <div className={`input-group ${error ? 'error' : ''}`}>
+              <input
+                type="text"
+                placeholder="https://youtube.com/watch?v=..."
+                value={url}
+                onChange={(e) => { setUrl(e.target.value); setError(''); }}
+                autoFocus
+              />
+              <span className="hint-text">Requires local proxy: python local_proxy.py</span>
+            </div>
+          )}
+          {error && <span className="error-text">{error}</span>}
+          {mode === 'file' && loading && uploadPct > 0 && (
+            <span className="hint-text">Upload {uploadPct}%</span>
+          )}
           <div className="label-row">
             <input
               type="text"
@@ -65,7 +107,11 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
           </div>
           <button className="btn-primary" type="submit" disabled={loading}>
             {loading && <span className="spinner" />}
-            {loading ? 'Submitting...' : 'Analyze Game'}
+            {loading
+              ? (mode === 'file'
+                ? `Uploading${uploadPct > 0 ? ` ${uploadPct}%` : '...'}`
+                : 'Submitting...')
+              : 'Analyze Game'}
           </button>
         </form>
 

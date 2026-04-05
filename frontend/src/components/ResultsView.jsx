@@ -171,7 +171,7 @@ function BottomRightPanel({ metrics, formations, meta, currentTime, jobId, repor
   const [mode, setMode] = useState('metrics')
 
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="panel bottom-right-panel">
       {/* Mini toggle */}
       <div style={{
         display: 'flex',
@@ -194,7 +194,7 @@ function BottomRightPanel({ metrics, formations, meta, currentTime, jobId, repor
         </button>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="bottom-right-panel-body">
         {mode === 'metrics' ? (
           <MetricsPanel
             metrics={metrics}
