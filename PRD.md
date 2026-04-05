@@ -111,12 +111,13 @@ A full-stack web application where a user pastes a YouTube link to a water polo 
 
 ### Module Breakdown
 
-#### Module 1: Frontend (React + Vercel)
+#### Module 1: Frontend (Vite + React + D3 + Vercel)
 
-- Single-page React app, deployed to Vercel on the free tier.
+- Single-page React app (plain JavaScript, no TypeScript) built with Vite, deployed to Vercel on the free tier.
+- **Charts and visualisations use D3.js** for full control over custom pool map rendering, heatmaps, hull area timelines, and formation charts.
 - Three main views: (1) Home / URL submission, (2) Processing / progress screen, (3) Results / analysis view.
-- Results view has four panels: bird's-eye pool map (canvas), event timeline (scrollable list), tactical metrics (charts), and chat pane.
-- The pool map is rendered on an HTML5 `<canvas>` element using position data from the event JSON. It is not a video player — it is a data visualisation that mirrors game time.
+- Results view has four panels: bird's-eye pool map (D3 SVG/canvas), event timeline (scrollable list), tactical metrics (D3 charts), and chat pane.
+- The pool map is rendered using D3 with position data from the event JSON. It is not a video player — it is a data visualisation that mirrors game time.
 - A shared timeline scrubber (a range slider) controls the current time displayed across all panels simultaneously.
 - Chat pane uses Server-Sent Events (SSE) to stream Claude responses.
 - Game history is stored in `localStorage` as a list of `{ job_id, label, youtube_url, timestamp }` objects. No user auth required.
@@ -146,29 +147,35 @@ A full-stack web application where a user pastes a YouTube link to a water polo 
 
 #### Module 4: Detection (`pipeline/detect.py`)
 
-- Loads `YOLOv10m` weights from HuggingFace Hub (`ultralytics/assets`), cached in the model volume.
+- Loads `YOLOv8m` weights (player detection) and `YOLOv8n` weights (ball detection) from the `ultralytics` auto-download mechanism, cached in the model volume.
 - Runs inference every 3rd frame (effectively 10fps), which is sufficient for tactical analysis and keeps processing time under 40 minutes for a 45-minute game on a T4.
-- Three detection heads running in one forward pass:
-  1. **Player detector** — detects persons from head/shoulders up (water polo-specific). Returns bounding boxes + confidence.
-  2. **Ball detector** — a separate small YOLOv10-nano head fine-tuned on water polo ball crops. Runs on a 2× upscaled crop of the upper pool area where the ball is most likely.
-  3. **Keypoint detector** — detects pool line keypoints (goal posts, 2m/5m/half lines) used by the homography module. Uses YOLO-pose or SuperPoint.
-- Team classification (cap colour) runs as a post-detection step using K-means (k=3: team A, team B, goalie) on the HSV histogram of each player crop. Runs on CPU.
+- Two detection models run per frame:
+  1. **Player detector** (`YOLOv8m`) — COCO-pretrained, filters for the `person` class. Returns bounding boxes + confidence.
+  2. **Ball detector** (`YOLOv8n`) — COCO-pretrained, filters for the `sports ball` class. If no detection is returned, a secondary HSV-based orange ball detector runs on the frame (H: 5–25, S > 100, V > 100; contours filtered by circularity and size).
+- No separate keypoint detection model — pool line keypoints are extracted by the homography module using classical CV (see Module 6).
+- Team classification (cap colour) runs as a post-detection step using K-means (k=3: team A, team B, goalie) on the HSV histogram of the **top 30% of each player bounding box** (the cap region), not the full crop. This reduces noise from water splashing and body exposure. Runs on CPU after the full video is processed.
 - Writes per-frame detection results to a `detections.jsonl` file (one JSON line per processed frame) so progress is not lost if the job is interrupted.
 - Reports progress to the `progress.json` file after every 500 frames.
 
 #### Module 5: Tracking (`pipeline/track.py`)
 
 - Uses `ByteTrack` (via the `supervision` library) for within-shot player ID assignment. Runs on CPU.
-- Uses `OSNet` (via `torchreid`, weights from HuggingFace) as the re-ID embedding model for cross-cut continuity.
+- Uses **ResNet18** (pretrained via `torchvision`, final FC layer removed to produce 512-dim embeddings) as the re-ID embedding model for cross-cut continuity. Embeddings are L2-normalised; cross-cut matching uses cosine similarity with a threshold of 0.7. This replaces OSNet/torchreid for a lighter dependency footprint with a clear upgrade path.
 - A `Kalman filter` per player predicts position through occlusion windows of up to 2 seconds (20 frames at 10fps). Players unmatched longer than 2 seconds are considered lost and re-matched via re-ID on reappearance.
-- Outputs a `tracks.jsonl` with `{ frame, player_id, team, bbox, confidence }` per row.
+- Scene cuts are detected by frame-to-frame histogram correlation drop below 0.3, triggering a tracker reset and cross-cut re-ID pass.
+- Outputs a `tracks.jsonl` with `{ frame_idx, t_seconds, player_id, team, bbox, confidence }` per row.
 
 #### Module 6: Homography (`pipeline/homography.py`)
 
-- Detects scene cuts using frame-to-frame histogram difference. Recomputes homography on each new shot.
-- Matches detected pool keypoints to a canonical FINA pool template (25m × 13m, 2m/5m/half lines at known coordinates) using `cv2.findHomography` with RANSAC.
-- Applies `H` to the foot-point (bottom-centre of each player bounding box) to produce `(x, y)` in metres on the pool.
-- Outputs a `positions.jsonl` with `{ t_seconds, player_id, team, x_metres, y_metres }` per entry.
+- Detects scene cuts using frame-to-frame histogram difference (correlation drop below 0.3). Recomputes homography on each new shot.
+- Uses **classical CV** (no learned model) to find pool line keypoints:
+  1. Convert frame to HSV and create a water mask (H: 85–130) to restrict edge detection to the pool area.
+  2. Run Canny edge detection on the masked grayscale frame.
+  3. Run `HoughLinesP` to extract line segments; cluster into vertical (pool lane markers) and horizontal (side boundaries) groups.
+  4. Compute line intersections and match to known FINA template coordinates (goal lines at 0m/25m, 2m lines, 5m lines, half at 12.5m, side boundaries at 0m/13m).
+- Requires ≥ 4 matched keypoints to compute `cv2.findHomography` with RANSAC. If fewer are found, the last valid `H` matrix is reused with a `h_stale` flag set in the output.
+- Applies `H` to the foot-point (bottom-centre of each player bounding box) to produce `(x, y)` in metres, clamped to pool bounds.
+- Outputs a `positions.jsonl` with `{ t_seconds, frame_idx, player_id, team, x_metres, y_metres, h_stale }` per entry.
 
 #### Module 7: Event Classifier (`pipeline/events.py`)
 
@@ -197,7 +204,7 @@ A full-stack web application where a user pastes a YouTube link to a water polo 
 #### Module 8: Tactical Agent (`pipeline/agent.py`)
 
 - Summarises `events.json` into a compact context string (since the full positions array would exceed context limits). The summary includes: event log with timestamps, formation transitions, turnover locations, man-up sequences, and aggregated metrics. Target: under 8,000 tokens.
-- `generate_report(events_summary) -> str` — calls `claude-opus-4-6` with a water-polo-expert system prompt and the summarised context. Returns a structured markdown report with sections: Summary, Key Moments, Tactical Patterns, Individual Notes, Recommendations.
+- `generate_report(events_summary) -> str` — calls `claude-sonnet-4-6` with a water-polo-expert system prompt and the summarised context. Returns a structured markdown report with sections: Summary, Key Moments, Tactical Patterns, Individual Notes, Recommendations.
 - `stream_chat(events_summary, messages) -> Generator` — takes the full conversation history plus the events summary as system context, calls Claude with `stream=True`, yields SSE chunks.
 - The system prompt instructs Claude to: cite timestamps when referencing events, distinguish between the two teams consistently, flag uncertain inferences, and ground strategic recommendations in observed data rather than generic advice.
 
@@ -220,7 +227,7 @@ YouTube URL
 - All model weights must be sourced from HuggingFace Hub or the `ultralytics` auto-download mechanism. No proprietary APIs for inference.
 - The Modal T4 GPU function has a 1-hour timeout. A 90-minute game at 10fps effective = ~54,000 frames through YOLO. At ~30fps throughput on T4 this takes ~30 minutes. Within budget.
 - The Modal free tier provides $30/month in credits. At ~$0.60/hr for T4, this is 50 hours of GPU — sufficient for ~100 full-game analyses per month at personal use scale.
-- The Anthropic API is called only twice per game (report generation + on-demand chat). At `claude-opus-4-6` pricing, the report generation costs ~$0.02–0.05. Chat responses are ~$0.01 each.
+- The Anthropic API is called only twice per game (report generation + on-demand chat). At `claude-sonnet-4-6` pricing, the report generation costs ~$0.002–0.005. Chat responses are ~$0.001 each.
 - No user authentication is implemented. The app is single-user by design. Job IDs are UUIDs; knowledge of a job ID grants access to its results.
 - The frontend stores game history in `localStorage`. No database is needed.
 
@@ -290,7 +297,7 @@ Tests should verify the external behaviour of each module given a known input �
 
 - **User authentication and multi-user accounts.** The app is intentionally single-user. Adding auth, user accounts, or per-user storage is a future concern.
 - **Real-time / live game analysis.** The pipeline is batch-only. A live streaming pipeline would require a fundamentally different architecture (frame buffer, sub-second latency model serving) and is out of scope.
-- **Fine-tuning the ball detector.** The PRD specifies using a small YOLO-nano head for ball detection but does not include the data collection and fine-tuning workflow. The initial build uses a pretrained model; fine-tuning is a follow-on task once labelled data is collected.
+- **Fine-tuning the ball detector.** Ball detection uses a pretrained YOLOv8n (COCO `sports ball` class) with an HSV orange-ball fallback detector. Fine-tuning on water polo-specific crops is a follow-on task once labelled data is collected.
 - **Individual player identification by number.** Jersey number OCR is not included. Players are identified by persistent tracking IDs and team colour only.
 - **Audio analysis** (referee whistle detection, crowd noise). Only visual data is used.
 - **Mobile app.** The frontend is a responsive web app, not a native iOS/Android app.
