@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
-## Virtual environment
+## Environment
 
-Always use the project virtual environment. Create it once if it doesn't exist:
+Always use the project virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -12,72 +12,208 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-All commands below assume the venv is active (`source .venv/bin/activate`). Never use the system Python or a user-level pip install for this project.
+Never use the system Python or a global `pip install` for this project.
 
-## Commands
+Frontend dependencies live in `frontend/`:
 
 ```bash
-# Run all unit tests (no GPU/network required)
-pytest tests/test_events.py tests/test_agent.py tests/test_homography.py -v
+cd frontend
+npm install
+```
 
-# Run a single test
+## High-signal commands
+
+Core local test suite:
+
+```bash
+source .venv/bin/activate
+pytest tests/test_events.py tests/test_agent.py tests/test_homography.py tests/test_uploads.py -v
+```
+
+Single test:
+
+```bash
+source .venv/bin/activate
 pytest tests/test_events.py::TestTurnoverDetection::test_clear_possession_switch -v
+```
 
-# Run integration tests (requires network)
+Integration tests:
+
+```bash
+source .venv/bin/activate
 pytest -m integration -v
+```
 
-# Deploy to Modal
-modal deploy app.py
+Serve the Modal-backed FastAPI app locally:
 
-# Run locally (serves FastAPI on localhost)
+```bash
+source .venv/bin/activate
 modal serve app.py
+```
+
+Deploy to Modal:
+
+```bash
+source .venv/bin/activate
+modal deploy app.py
+```
+
+Run the local YouTube proxy:
+
+```bash
+source .venv/bin/activate
+python local_proxy.py
+```
+
+Run the frontend:
+
+```bash
+cd frontend
+npm run dev
 ```
 
 ## Architecture
 
-The system is a serverless CV pipeline that processes YouTube water polo footage into tactical analysis. Data flows one-way through sequential modules, each writing a file to a Modal Volume:
+The project is a serverless water polo analysis pipeline with a separate React frontend.
 
-```
-YouTube URL → download.py → detect.py → track.py → homography.py → events.py → agent.py
-               game.mp4   detections.jsonl  tracks.jsonl  positions.jsonl  events.json  report (in events.json)
-```
+Primary flow:
 
-**`app.py`** is the Modal entrypoint. It defines two things:
-1. A `@modal.asgi_app()` wrapping FastAPI — this is the HTTP server clients talk to.
-2. A `@app.function(gpu="T4")` called `run_pipeline` — this is the GPU worker that runs the full CV chain. The FastAPI `/process` endpoint calls `run_pipeline.spawn()` to kick it off asynchronously.
-
-Both share two Modal Volumes: `wp-results` (job outputs) and `wp-model-cache` (YOLO weights).
-
-**Progress tracking** uses a `progress.json` file written to the job directory after each stage. The frontend polls `GET /status/{job_id}` which reads this file.
-
-**`pipeline/detect.py`** does two passes over the video: first pass collects all player cap-region HSV histograms, second pass (after K-means clustering) labels each player with `team_a`/`team_b`/`goalie`. This means team labels are only available after the full video is processed.
-
-**`pipeline/track.py`** handles two levels of ID consistency:
-- *Within a shot*: ByteTrack via the `supervision` library
-- *Across camera cuts*: ResNet18 embeddings + cosine similarity matching. Scene cuts are detected by histogram correlation drop below 0.3.
-
-**`pipeline/homography.py`** maps pixel coordinates → pool metres using Canny + HoughLinesP to find pool lane lines, then matches detected line intersections to known FINA template coordinates (25m × 13m). When fewer than 4 keypoints are found, it reuses the last valid H matrix with a `h_stale` flag.
-
-**`pipeline/events.py`** produces the canonical `events.json` consumed by the frontend and agent. All rule-based detection (turnover, man-up, exclusion, counter-attack, press trigger) happens here, along with formation labelling (K-means vs 5 archetype templates) and all tactical metrics.
-
-**`pipeline/agent.py`** never receives raw `positions` arrays — it receives a compact summary string from `summarize_events()` that represents events as one-line records and metrics as tables, targeting <8k tokens.
-
-## Key data contracts
-
-`detections.jsonl` — one JSON line per processed frame (every 3rd frame):
-```json
-{"frame_idx": 90, "t_seconds": 3.0, "players": [{"bbox": [x1,y1,x2,y2], "confidence": 0.9, "team": "team_a"}], "ball": {"bbox": [...], "source": "yolo|hsv|null"}}
+```text
+YouTube URL or uploaded video
+  -> pipeline/download.py
+  -> pipeline/detect.py
+  -> pipeline/track.py
+  -> pipeline/homography.py
+  -> pipeline/events.py
+  -> pipeline/agent.py
 ```
 
-`positions.jsonl` — one entry per tracked player per frame:
-```json
-{"t_seconds": 3.0, "player_id": 4, "team": "team_a", "x_metres": 12.5, "y_metres": 6.5, "h_stale": false}
-```
+`app.py` is the main entrypoint and owns:
 
-`events.json` — final output with top-level keys: `meta`, `positions`, `events`, `formations`, `metrics`, `report`.
+1. A FastAPI web app exposed from Modal via `@modal.asgi_app()`
+2. A GPU worker function `run_pipeline(...)` that performs the full analysis asynchronously
 
-## Modal-specific notes
+The web app calls `run_pipeline.spawn(...)` for both YouTube jobs and uploaded-video jobs.
 
-- `results_vol.commit()` must be called after writing files inside the GPU function, otherwise changes aren't visible to the web function.
-- `results_vol.reload()` must be called in the web function before reading job files.
-- The `RESULTS_DIR = "/results"` and `MODELS_DIR = "/models"` constants define volume mount points used throughout all pipeline modules.
+## Current request paths
+
+There are two distinct ingest paths:
+
+1. YouTube URL path
+   - Frontend sends `POST /process` to `local_proxy.py`
+   - `local_proxy.py` downloads the video locally with `yt-dlp`
+   - The proxy uploads the file to Modal through `POST /process-upload`
+
+2. Direct file upload path
+   - Frontend calls `POST /uploads/init`
+   - File chunks are appended through `PUT /uploads/{job_id}/chunk`
+   - `POST /uploads/{job_id}/complete` marks the upload finished and spawns the pipeline
+
+There is also a one-shot multipart upload endpoint, `POST /process-upload`, used by the local proxy.
+
+## API endpoints in `app.py`
+
+- `POST /process`
+- `POST /uploads/init`
+- `PUT /uploads/{job_id}/chunk`
+- `POST /uploads/{job_id}/complete`
+- `POST /process-upload`
+- `GET /status/{job_id}`
+- `GET /results/{job_id}`
+- `POST /chat`
+- `DELETE /jobs/{job_id}`
+
+`/chat` streams SSE chunks from Claude based on the compact summary generated by `pipeline.agent.summarize_events()`.
+
+## Pipeline module notes
+
+`pipeline/download.py`
+
+- Downloads YouTube videos with `yt-dlp`
+- Can also inspect already-uploaded files via `probe_video()`
+- Optionally uses `YOUTUBE_COOKIES` from the runtime environment
+
+`pipeline/detect.py`
+
+- Processes every third frame
+- Detects players with YOLOv8
+- Detects the ball with YOLO first, then HSV fallback
+- Clusters cap-region HSV histograms into `team_a`, `team_b`, and `goalie`
+
+`pipeline/track.py`
+
+- Uses `supervision.ByteTrack` for within-shot tracking
+- Uses pretrained ResNet18 embeddings for cross-cut re-identification
+- Detects scene cuts by grayscale histogram correlation
+
+`pipeline/homography.py`
+
+- Detects pool water and line geometry with classical CV
+- Computes a homography into a 25m x 13m pool template
+- Marks reused transforms with `h_stale` when fresh keypoints are unavailable
+
+`pipeline/events.py`
+
+- Produces the canonical `events.json`
+- Detects turnovers, man-up phases, exclusions, counter-attacks, and press-like contractions
+- Generates formation labels and tactical metrics such as possession, hull area, centroid spread, and heatmaps
+
+`pipeline/agent.py`
+
+- Compresses `events.json` into a text summary for Claude
+- Generates the top-level markdown report
+- Streams chat responses against the same summarized context
+
+## Data written per job
+
+Each job lives under `/results/<job_id>/` in the Modal results volume. Common files:
+
+- `game.mp4`
+- `progress.json`
+- `upload.json` for chunked uploads
+- `detections.jsonl`
+- `tracks.jsonl`
+- `positions.jsonl`
+- `events.json`
+
+Canonical `events.json` keys:
+
+- `meta`
+- `positions`
+- `events`
+- `formations`
+- `metrics`
+- `report`
+
+## Frontend notes
+
+The frontend lives in `frontend/` and currently supports:
+
+- file upload and YouTube submission modes
+- a processing screen with live progress polling
+- optional debug-mode counters from `progress.json`
+- a tactical pool map and event timeline
+- metrics and Claude chat in the results view
+- local browser game-history persistence
+
+`frontend/src/api.js` is the main integration point:
+
+- file uploads hit the FastAPI API directly
+- YouTube submissions use `http://127.0.0.1:8001` by default
+- chat is streamed over SSE
+
+## Environment variables and secrets
+
+- `ANTHROPIC_API_KEY`: required for report generation and chat
+- `YOUTUBE_COOKIES`: optional, used for YouTube downloads in Modal
+- `WP_API_URL`: optional override for the Modal backend target used by `local_proxy.py`
+- `VITE_API_URL`: optional frontend override for the API base URL
+
+In Modal, `ANTHROPIC_API_KEY` and YouTube cookies are expected as secrets.
+
+## Modal-specific reminders
+
+- Call `results_vol.commit()` after writes inside Modal functions
+- Call `results_vol.reload()` before reads in the web app
+- `RESULTS_DIR = "/results"` and `MODELS_DIR = "/models"` are the shared mount points
+- Do not document or assume synchronous execution; the web app always queues work with `spawn()`
