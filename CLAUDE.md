@@ -2,17 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Virtual environment
+
+Always use the project virtual environment. Create it once if it doesn't exist:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+All commands below assume the venv is active (`source .venv/bin/activate`). Never use the system Python or a user-level pip install for this project.
+
 ## Commands
 
 ```bash
 # Run all unit tests (no GPU/network required)
-/Users/kokon/Library/Python/3.9/bin/pytest tests/test_events.py tests/test_agent.py tests/test_homography.py -v
+pytest tests/test_events.py tests/test_agent.py tests/test_homography.py -v
 
 # Run a single test
-/Users/kokon/Library/Python/3.9/bin/pytest tests/test_events.py::TestTurnoverDetection::test_clear_possession_switch -v
+pytest tests/test_events.py::TestTurnoverDetection::test_clear_possession_switch -v
 
 # Run integration tests (requires network)
-/Users/kokon/Library/Python/3.9/bin/pytest -m integration -v
+pytest -m integration -v
 
 # Deploy to Modal
 modal deploy app.py
