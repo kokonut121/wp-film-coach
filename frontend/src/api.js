@@ -2,12 +2,17 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const LOCAL_PROXY_URL = 'http://127.0.0.1:8001'
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 
-export async function submitGame(youtubeUrl, label) {
+export async function submitGame(youtubeUrl, label, debug = false, homographyMode = 'auto') {
   // Route YouTube downloads through the local proxy to avoid IP blocking
   const res = await fetch(`${LOCAL_PROXY_URL}/process`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ youtube_url: youtubeUrl, label: label || undefined }),
+    body: JSON.stringify({
+      youtube_url: youtubeUrl,
+      label: label || undefined,
+      debug,
+      homography_mode: homographyMode,
+    }),
   }).catch(() => null)
 
   if (!res || !res.ok) {
@@ -27,7 +32,7 @@ async function parseError(res) {
   throw new Error(err.detail || err.error || `Server error ${res.status}`)
 }
 
-export async function uploadGame(file, label, onProgress) {
+export async function uploadGame(file, label, onProgress, debug = false, homographyMode = 'auto') {
   const initRes = await fetch(`${API_URL}/uploads/init`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -36,6 +41,8 @@ export async function uploadGame(file, label, onProgress) {
       label: label || undefined,
       content_type: file.type || 'application/octet-stream',
       total_size: file.size,
+      debug,
+      homography_mode: homographyMode,
     }),
   })
 
@@ -79,6 +86,24 @@ export async function uploadGame(file, label, onProgress) {
   }
 
   return completeRes.json()
+}
+
+export function getCalibrationFrameUrl(jobId) {
+  return `${API_URL}/uploads/${jobId}/calibration-frame`
+}
+
+export async function submitCalibration(jobId, lines) {
+  const res = await fetch(`${API_URL}/uploads/${jobId}/calibration`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lines }),
+  })
+
+  if (!res.ok) {
+    await parseError(res)
+  }
+
+  return res.json()
 }
 
 export async function fetchStatus(jobId) {

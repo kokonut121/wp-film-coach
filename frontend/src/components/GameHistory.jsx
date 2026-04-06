@@ -18,6 +18,12 @@ export default function GameHistory({ games, onOpen, onDelete }) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
+  const statusLabel = (status) => {
+    if (status === 'done') return 'Complete'
+    if (status === 'awaiting_calibration') return 'Awaiting calibration'
+    return 'Processing...'
+  }
+
   return (
     <div className="history-section fade-in">
       <h3>Previous Analyses</h3>
@@ -30,7 +36,7 @@ export default function GameHistory({ games, onOpen, onDelete }) {
           <div className="history-item-info">
             <span className="history-item-label">{game.label || 'Untitled'}</span>
             <span className="history-item-meta">
-              {formatDate(game.timestamp)} &middot; {game.status === 'done' ? 'Complete' : 'Processing...'}
+              {formatDate(game.timestamp)} &middot; {statusLabel(game.status)}
             </span>
           </div>
           <div className="history-item-actions">

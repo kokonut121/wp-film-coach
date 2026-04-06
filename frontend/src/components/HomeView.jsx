@@ -9,6 +9,8 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
   const [label, setLabel] = useState('')
   const [file, setFile] = useState(null)
   const [mode, setMode] = useState('file') // 'url' | 'file'
+  const [homographyMode, setHomographyMode] = useState('auto')
+  const [debugMode, setDebugMode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [error, setError] = useState('')
@@ -23,11 +25,17 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
         setError('Enter a valid YouTube URL')
         return
       }
-      setLoading(true)
+        setLoading(true)
       setUploadPct(0)
       try {
-        const { job_id } = await submitGame(url.trim(), label.trim())
-        onSubmit(job_id, url.trim(), label.trim())
+        const { job_id } = await submitGame(url.trim(), label.trim(), debugMode, 'auto')
+        onSubmit({
+          jobId: job_id,
+          source: url.trim(),
+          label: label.trim(),
+          status: 'processing',
+          homographyMode: 'auto',
+        })
       } catch (err) {
         setError(err.message)
       } finally {
@@ -41,8 +49,20 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
       setLoading(true)
       setUploadPct(0)
       try {
-        const { job_id } = await uploadGame(file, label.trim(), setUploadPct)
-        onSubmit(job_id, file.name, label.trim())
+        const response = await uploadGame(
+          file,
+          label.trim(),
+          setUploadPct,
+          debugMode,
+          homographyMode
+        )
+        onSubmit({
+          jobId: response.job_id,
+          source: file.name,
+          label: label.trim(),
+          status: response.needs_calibration ? 'awaiting_calibration' : 'processing',
+          homographyMode,
+        })
       } catch (err) {
         setError(err.message)
       } finally {
@@ -70,8 +90,29 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
         <form className="submit-form fade-in-delay-4" onSubmit={handleSubmit}>
           <div className="mode-toggle">
             <button type="button" className={mode === 'file' ? 'active' : ''} onClick={() => { setMode('file'); setError('') }}>Upload Video</button>
-            <button type="button" className={mode === 'url' ? 'active' : ''} onClick={() => { setMode('url'); setError('') }}>YouTube URL</button>
+            <button type="button" className={mode === 'url' ? 'active' : ''} onClick={() => { setMode('url'); setHomographyMode('auto'); setError('') }}>YouTube URL</button>
           </div>
+          <div className="mode-toggle homography-toggle">
+            <button
+              type="button"
+              className={homographyMode === 'auto' ? 'active' : ''}
+              onClick={() => setHomographyMode('auto')}
+            >
+              Auto Homography
+            </button>
+            <button
+              type="button"
+              className={homographyMode === 'manual' ? 'active' : ''}
+              onClick={() => mode === 'file' && setHomographyMode('manual')}
+              disabled={mode !== 'file'}
+              title={mode !== 'file' ? 'Manual homography is only available for uploaded videos' : undefined}
+            >
+              Manual Homography
+            </button>
+          </div>
+          {mode === 'url' && (
+            <span className="hint-text">Manual homography is available for uploaded videos only in v1.</span>
+          )}
           {mode === 'file' ? (
             <div className={`input-group ${error ? 'error' : ''}`}>
               <input
@@ -105,6 +146,15 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
               onChange={(e) => setLabel(e.target.value)}
             />
           </div>
+          <label className="debug-toggle">
+            <input
+              type="checkbox"
+              checked={debugMode}
+              onChange={(e) => setDebugMode(e.target.checked)}
+            />
+            <span>Debug mode</span>
+            <small>Show live pipeline counts while processing</small>
+          </label>
           <button className="btn-primary" type="submit" disabled={loading}>
             {loading && <span className="spinner" />}
             {loading

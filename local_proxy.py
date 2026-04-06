@@ -34,10 +34,15 @@ app.add_middleware(
 class ProcessRequest(BaseModel):
     youtube_url: str
     label: str | None = None
+    debug: bool = False
+    homography_mode: str = "auto"
 
 
 @app.post("/process")
 def process_video(req: ProcessRequest):
+    if req.homography_mode != "auto":
+        return {"error": "Manual homography is only supported for uploaded videos"}
+
     tmpdir = tempfile.mkdtemp()
     video_path = os.path.join(tmpdir, "game.mp4")
 
@@ -71,6 +76,7 @@ def process_video(req: ProcessRequest):
     with open(video_path, "rb") as f:
         files = {"file": ("game.mp4", f, "video/mp4")}
         data = {"label": req.label} if req.label else {}
+        data["debug"] = str(req.debug).lower()
         resp = requests.post(f"{MODAL_API_URL}/process-upload", files=files, data=data)
 
     os.remove(video_path)

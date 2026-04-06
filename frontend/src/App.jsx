@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useGameHistory } from './hooks/useGameHistory'
 import HomeView from './components/HomeView'
+import CalibrationView from './components/CalibrationView'
 import ProcessingView from './components/ProcessingView'
 import ResultsView from './components/ResultsView'
 
@@ -13,27 +14,33 @@ function getDemoMode() {
 
 export default function App() {
   const demoMode = getDemoMode()
-  // view: 'home' | 'processing' | 'results'
+  // view: 'home' | 'calibration' | 'processing' | 'results'
   const [view, setView] = useState(demoMode || 'home')
   const [activeJobId, setActiveJobId] = useState(demoMode ? '__demo__' : null)
   const [activeLabel, setActiveLabel] = useState(demoMode ? 'Demo Game vs UCLA' : '')
   const { games, addGame, removeGame, updateGame } = useGameHistory()
 
   const handleSubmit = useCallback(
-    (jobId, youtubeUrl, label) => {
+    ({ jobId, source, label, status = 'processing', homographyMode = 'auto' }) => {
       addGame({
         job_id: jobId,
         label: label || 'Untitled Game',
-        youtube_url: youtubeUrl,
+        youtube_url: source,
         timestamp: Date.now(),
-        status: 'processing',
+        status,
+        homography_mode: homographyMode,
       })
       setActiveJobId(jobId)
       setActiveLabel(label || 'Untitled Game')
-      setView('processing')
+      setView(status === 'awaiting_calibration' ? 'calibration' : 'processing')
     },
     [addGame]
   )
+
+  const handleCalibrationDone = useCallback(() => {
+    updateGame(activeJobId, { status: 'processing' })
+    setView('processing')
+  }, [activeJobId, updateGame])
 
   const handleProcessingDone = useCallback(() => {
     updateGame(activeJobId, { status: 'done' })
@@ -45,6 +52,8 @@ export default function App() {
     setActiveLabel(game.label)
     if (game.status === 'done') {
       setView('results')
+    } else if (game.status === 'awaiting_calibration') {
+      setView('calibration')
     } else {
       setView('processing')
     }
@@ -95,6 +104,15 @@ export default function App() {
         <ProcessingView
           jobId={activeJobId}
           onDone={handleProcessingDone}
+          onBack={handleGoHome}
+        />
+      )}
+
+      {view === 'calibration' && (
+        <CalibrationView
+          jobId={activeJobId}
+          label={activeLabel}
+          onDone={handleCalibrationDone}
           onBack={handleGoHome}
         />
       )}

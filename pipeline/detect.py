@@ -11,6 +11,13 @@ import numpy as np
 from sklearn.cluster import KMeans
 from ultralytics import YOLO
 
+from pipeline.pool_geometry import (
+    apply_pool_bounds,
+    calibration_pool_polygon,
+    load_calibration,
+    mask_and_crop_to_polygon,
+)
+
 # COCO class IDs
 PERSON_CLASS = 0
 SPORTS_BALL_CLASS = 32
@@ -86,6 +93,15 @@ def _extract_cap_histogram(frame: np.ndarray, bbox: list[int]) -> np.ndarray:
     return hist.astype(np.float32)
 
 
+def _offset_bbox(bbox: list[int], offset_x: int, offset_y: int) -> list[int]:
+    return [
+        int(bbox[0] + offset_x),
+        int(bbox[1] + offset_y),
+        int(bbox[2] + offset_x),
+        int(bbox[3] + offset_y),
+    ]
+
+
 def _classify_teams(all_histograms: list[np.ndarray], all_indices: list[tuple[int, int]]) -> dict:
     """Classify detections into team_a, team_b, goalie using K-means on cap histograms.
 
@@ -124,6 +140,8 @@ def run_detection(
     output_dir: str,
     progress_callback: Callable[[int], None] | None = None,
     model_dir: str = "/models",
+    homography_mode: str = "auto",
+    calibration_path: str | None = None,
 ) -> str:
     """Run player and ball detection on a video.
 
@@ -157,6 +175,9 @@ def run_detection(
 
     frame_idx = 0
     processed = 0
+    manual_polygon = None
+    if homography_mode == "manual" and calibration_path and os.path.exists(calibration_path):
+        manual_polygon = calibration_pool_polygon(load_calibration(calibration_path)["lines"])
 
     while True:
         ret, frame = cap.read()
@@ -168,10 +189,24 @@ def run_detection(
             continue
 
         t_seconds = frame_idx / fps
+        detection_frame = frame
+        offset_x, offset_y = 0, 0
+        if homography_mode == "manual" and manual_polygon is not None:
+            detection_frame, (offset_x, offset_y) = mask_and_crop_to_polygon(frame, manual_polygon)
+            if detection_frame.size == 0:
+                frame_detections.append({
+                    "frame_idx": frame_idx,
+                    "t_seconds": round(t_seconds, 3),
+                    "players": [],
+                    "ball": None,
+                })
+                processed += 1
+                frame_idx += 1
+                continue
 
         # Player detection
-        player_results = player_model(frame, verbose=False)[0]
-        players = []
+        player_results = player_model(detection_frame, verbose=False)[0]
+        candidate_players = []
         for i, box in enumerate(player_results.boxes):
             cls = int(box.cls[0])
             if cls != PERSON_CLASS:
@@ -180,7 +215,7 @@ def run_detection(
             if conf < 0.3:
                 continue
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int).tolist()
-            bbox = [x1, y1, x2, y2]
+            bbox = _offset_bbox([x1, y1, x2, y2], offset_x, offset_y)
 
             hist = _extract_cap_histogram(frame, bbox)
             player_entry = {
@@ -188,13 +223,11 @@ def run_detection(
                 "confidence": round(conf, 3),
                 "team": None,  # filled in second pass
             }
-            players.append(player_entry)
-            all_histograms.append(hist)
-            all_hist_indices.append((processed, len(players) - 1))
+            candidate_players.append((player_entry, hist))
 
         # Ball detection — YOLO first
         ball_entry = None
-        ball_results = ball_model(frame, verbose=False)[0]
+        ball_results = ball_model(detection_frame, verbose=False)[0]
         for box in ball_results.boxes:
             cls = int(box.cls[0])
             if cls != SPORTS_BALL_CLASS:
@@ -203,8 +236,9 @@ def run_detection(
             if conf < 0.2:
                 continue
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int).tolist()
+            bbox = _offset_bbox([x1, y1, x2, y2], offset_x, offset_y)
             ball_entry = {
-                "bbox": [x1, y1, x2, y2],
+                "bbox": bbox,
                 "confidence": round(conf, 3),
                 "source": "yolo",
             }
@@ -212,7 +246,30 @@ def run_detection(
 
         # HSV fallback if no YOLO ball
         if ball_entry is None:
-            ball_entry = _detect_ball_hsv(frame)
+            ball_entry = _detect_ball_hsv(detection_frame)
+            if ball_entry is not None:
+                ball_entry["bbox"] = _offset_bbox(ball_entry["bbox"], offset_x, offset_y)
+
+        frame_pos = len(frame_detections)
+        if homography_mode == "manual":
+            players, ball_entry = apply_pool_bounds(
+                [player for player, _ in candidate_players],
+                ball_entry,
+                manual_polygon,
+            )
+            kept_bboxes = {tuple(player["bbox"]) for player in players}
+            kept_players = [
+                (player_entry, hist)
+                for player_entry, hist in candidate_players
+                if tuple(player_entry["bbox"]) in kept_bboxes
+            ]
+        else:
+            players = [player for player, _ in candidate_players]
+            kept_players = candidate_players
+
+        for player_idx, (_, hist) in enumerate(kept_players):
+            all_histograms.append(hist)
+            all_hist_indices.append((frame_pos, player_idx))
 
         frame_detections.append({
             "frame_idx": frame_idx,

@@ -16,7 +16,7 @@ function stageIndex(stage) {
 }
 
 export default function ProcessingView({ jobId, onDone, onBack }) {
-  const { stage, pct, error } = useJobStatus(jobId)
+  const { stage, pct, error, debug } = useJobStatus(jobId)
   const currentIdx = stageIndex(stage)
 
   useEffect(() => {
@@ -79,6 +79,9 @@ export default function ProcessingView({ jobId, onDone, onBack }) {
             <br />
             Check back anytime from the home page.
           </div>
+          {debug?.enabled && (
+            <DebugPanel debug={debug} />
+          )}
         </>
       )}
 
@@ -97,4 +100,49 @@ export default function ProcessingView({ jobId, onDone, onBack }) {
       )}
     </div>
   )
+}
+
+function DebugPanel({ debug }) {
+  const stageEntries = Object.entries(debug.stages || {})
+
+  return (
+    <div className="debug-panel fade-in">
+      <div className="debug-panel-header">
+        <span>Debug Mode</span>
+        <span>{debug.current_stage?.replace(/_/g, ' ') || 'running'}</span>
+      </div>
+
+      {debug.input && (
+        <div className="debug-block">
+          <div className="debug-block-title">Input</div>
+          <div className="debug-kv">
+            {Object.entries(debug.input).map(([key, value]) => (
+              <div key={key} className="debug-kv-row">
+                <span>{prettyKey(key)}</span>
+                <strong>{String(value)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {stageEntries.map(([stageKey, values]) => (
+        <div key={stageKey} className="debug-block">
+          <div className="debug-block-title">{prettyKey(stageKey)}</div>
+          <div className="debug-kv">
+            {Object.entries(values).map(([key, value]) => (
+              <div key={key} className="debug-kv-row">
+                <span>{prettyKey(key)}</span>
+                <strong>{Array.isArray(value) ? value.join(', ') : String(value)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function prettyKey(value) {
+  return value.replace(/_/g, ' ')
 }
