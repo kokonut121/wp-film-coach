@@ -27,7 +27,7 @@ Core local test suite:
 
 ```bash
 source .venv/bin/activate
-pytest tests/test_events.py tests/test_agent.py tests/test_homography.py tests/test_uploads.py -v
+pytest tests/test_detect.py tests/test_events.py tests/test_agent.py tests/test_homography.py tests/test_manual_homography.py tests/test_uploads.py -v
 ```
 
 Single test:
@@ -95,6 +95,11 @@ YouTube URL or uploaded video
 
 The web app calls `run_pipeline.spawn(...)` for both YouTube jobs and uploaded-video jobs.
 
+`run_pipeline(...)` supports two homography modes:
+
+- `auto`: classical CV homography via `pipeline/homography.py`
+- `manual`: uploaded-video-only flow using calibration lines and `pipeline/manual_homography.py`
+
 ## Current request paths
 
 There are two distinct ingest paths:
@@ -103,13 +108,22 @@ There are two distinct ingest paths:
    - Frontend sends `POST /process` to `local_proxy.py`
    - `local_proxy.py` downloads the video locally with `yt-dlp`
    - The proxy uploads the file to Modal through `POST /process-upload`
+   - Only `homography_mode="auto"` is valid here
 
 2. Direct file upload path
    - Frontend calls `POST /uploads/init`
    - File chunks are appended through `PUT /uploads/{job_id}/chunk`
-   - `POST /uploads/{job_id}/complete` marks the upload finished and spawns the pipeline
+   - `POST /uploads/{job_id}/complete` either spawns the pipeline immediately or pauses for manual calibration
 
 There is also a one-shot multipart upload endpoint, `POST /process-upload`, used by the local proxy.
+
+For manual homography uploads:
+
+1. `/uploads/{job_id}/complete` extracts `calibration_frame.jpg`
+2. The job enters `awaiting_calibration`
+3. The frontend loads `GET /uploads/{job_id}/calibration-frame`
+4. The user draws 9 reference lines
+5. `POST /uploads/{job_id}/calibration` writes `calibration.json` and starts the pipeline
 
 ## API endpoints in `app.py`
 
@@ -117,6 +131,8 @@ There is also a one-shot multipart upload endpoint, `POST /process-upload`, used
 - `POST /uploads/init`
 - `PUT /uploads/{job_id}/chunk`
 - `POST /uploads/{job_id}/complete`
+- `GET /uploads/{job_id}/calibration-frame`
+- `POST /uploads/{job_id}/calibration`
 - `POST /process-upload`
 - `GET /status/{job_id}`
 - `GET /results/{job_id}`
@@ -139,6 +155,7 @@ There is also a one-shot multipart upload endpoint, `POST /process-upload`, used
 - Detects players with YOLOv8
 - Detects the ball with YOLO first, then HSV fallback
 - Clusters cap-region HSV histograms into `team_a`, `team_b`, and `goalie`
+- In manual mode, detection is constrained to the calibrated pool polygon and bounding boxes are offset back into full-frame coordinates
 
 `pipeline/track.py`
 
@@ -151,6 +168,19 @@ There is also a one-shot multipart upload endpoint, `POST /process-upload`, used
 - Detects pool water and line geometry with classical CV
 - Computes a homography into a 25m x 13m pool template
 - Marks reused transforms with `h_stale` when fresh keypoints are unavailable
+
+`pipeline/manual_homography.py`
+
+- Converts the 9 user-drawn calibration lines into intersection points
+- Computes a single homography from those derived correspondences
+- Maps tracked player foot points into pool coordinates without `h_stale` reuse logic
+
+`pipeline/pool_geometry.py`
+
+- Defines the calibration line keys and target pool points
+- Validates calibration submissions
+- Derives pool polygons and crops/masks frames to the pool ROI
+- Provides helpers shared by manual detection and manual homography
 
 `pipeline/events.py`
 
@@ -171,6 +201,8 @@ Each job lives under `/results/<job_id>/` in the Modal results volume. Common fi
 - `game.mp4`
 - `progress.json`
 - `upload.json` for chunked uploads
+- `calibration_frame.jpg` for manual uploads awaiting calibration
+- `calibration.json` after manual calibration is submitted
 - `detections.jsonl`
 - `tracks.jsonl`
 - `positions.jsonl`
@@ -190,6 +222,8 @@ Canonical `events.json` keys:
 The frontend lives in `frontend/` and currently supports:
 
 - file upload and YouTube submission modes
+- auto and manual homography selection for uploaded videos
+- a calibration screen for drawing the required 9 pool reference lines
 - a processing screen with live progress polling
 - optional debug-mode counters from `progress.json`
 - a tactical pool map and event timeline
@@ -200,6 +234,7 @@ The frontend lives in `frontend/` and currently supports:
 
 - file uploads hit the FastAPI API directly
 - YouTube submissions use `http://127.0.0.1:8001` by default
+- manual uploads use `/uploads/{job_id}/calibration-frame` and `/uploads/{job_id}/calibration`
 - chat is streamed over SSE
 
 ## Environment variables and secrets
