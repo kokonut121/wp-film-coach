@@ -347,6 +347,120 @@ body {
   margin-bottom: 12px;
 }
 
+/* ============================================================
+   FILE DROP ZONE
+   ============================================================ */
+
+.file-drop-zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 22px 24px;
+  margin-bottom: 12px;
+  background: var(--bg-surface);
+  border: 1.5px dashed rgba(0, 212, 255, 0.18);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  user-select: none;
+  overflow: hidden;
+}
+
+.file-drop-zone::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 120%, rgba(0, 212, 255, 0.06) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.file-drop-zone:hover,
+.file-drop-zone.dragging {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 3px var(--cyan-glow), inset 0 0 30px rgba(0, 212, 255, 0.04);
+  background: var(--bg-elevated);
+}
+
+.file-drop-zone:hover::before,
+.file-drop-zone.dragging::before {
+  opacity: 1;
+}
+
+.file-drop-zone.dragging {
+  border-style: solid;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-glow), 0 0 24px rgba(0, 212, 255, 0.12);
+}
+
+.file-drop-zone.has-file {
+  border-style: solid;
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.file-drop-zone.error {
+  border-color: var(--evt-turnover);
+  border-style: solid;
+}
+
+.file-drop-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--cyan);
+  transition: background 0.2s, color 0.2s;
+}
+
+.file-drop-zone.has-file .file-drop-icon {
+  background: rgba(0, 212, 255, 0.14);
+}
+
+.file-drop-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.file-drop-label {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: -0.01em;
+  transition: color 0.2s;
+}
+
+.file-drop-zone:hover .file-drop-label,
+.file-drop-zone.dragging .file-drop-label {
+  color: var(--text-primary);
+}
+
+.file-drop-name {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
+}
+
+.file-drop-meta {
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
 .input-group input[type="file"] {
   cursor: pointer;
 }

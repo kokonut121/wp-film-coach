@@ -79,11 +79,19 @@ def test_filtered_frame_assignment_does_not_require_removed_indices():
     assert [p["team"] for p in frame_detections[0]["players"]] == ["team_a", "team_b"]
 
 
-def test_manual_detection_runs_on_pool_roi_and_offsets_boxes(tmp_path, monkeypatch):
+def test_manual_detection_uses_hsv_cap_detection(tmp_path, monkeypatch):
+    """In manual mode, players are detected via HSV cap detection, not YOLO."""
+    # Build a synthetic frame: teal water background with a white cap blob
+    frame = np.zeros((60, 100, 3), dtype=np.uint8)
+    # Fill the pool region (20..80, 10..50) with teal water (BGR ~= 180, 160, 60)
+    frame[10:50, 20:80] = [180, 160, 60]
+    # Draw a white "cap" blob at pixel (50, 30) — 8x8 white square
+    frame[26:34, 46:54] = [255, 255, 255]
+
     video_path = str(tmp_path / "game.mp4")
     writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (100, 60))
     assert writer.isOpened()
-    writer.write(np.full((60, 100, 3), 255, dtype=np.uint8))
+    writer.write(frame)
     writer.release()
 
     calibration_path = tmp_path / "calibration.json"
@@ -102,12 +110,11 @@ def test_manual_detection_runs_on_pool_roi_and_offsets_boxes(tmp_path, monkeypat
     }
     calibration_path.write_text(json.dumps(calibration))
 
-    seen_shapes = {"player": [], "ball": []}
+    # YOLO is only used for ball detection in manual mode
+    seen_shapes = []
 
     def fake_yolo(model_name):
-        if model_name == "yolov8m.pt":
-            return _FakeModel([_FakeBox(0, 0.9, [5, 5, 15, 20])], seen_shapes["player"])
-        return _FakeModel([], seen_shapes["ball"])
+        return _FakeModel([], seen_shapes)
 
     monkeypatch.setattr("pipeline.detect.YOLO", fake_yolo)
 
@@ -123,6 +130,12 @@ def test_manual_detection_runs_on_pool_roi_and_offsets_boxes(tmp_path, monkeypat
         rows = [json.loads(line) for line in f if line.strip()]
 
     assert len(rows) == 1
-    assert seen_shapes["player"] == [(41, 61)]
-    assert rows[0]["players"][0]["bbox"] == [25, 15, 35, 30]
-    assert rows[0]["players"][0]["team"] == "team_a"
+    # Should detect the white cap blob as a player
+    assert len(rows[0]["players"]) >= 1
+    # The detected bbox should be within the pool region (offset back to full frame)
+    player = rows[0]["players"][0]
+    bbox = player["bbox"]
+    assert bbox[0] >= 20 and bbox[2] <= 80  # x within pool
+    assert bbox[1] >= 10 and bbox[3] <= 50  # y within pool
+    # Team should be assigned (even with just 1 frame, falls back to team_a)
+    assert player["team"] in ("team_a", "team_b")

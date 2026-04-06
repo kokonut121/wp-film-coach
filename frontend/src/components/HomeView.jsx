@@ -1,73 +1,61 @@
 import { useState, useRef } from 'react'
-import { submitGame, uploadGame } from '../api'
+import { uploadGame } from '../api'
 import GameHistory from './GameHistory'
 
-const URL_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]+/
-
 export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) {
-  const [url, setUrl] = useState('')
   const [label, setLabel] = useState('')
   const [file, setFile] = useState(null)
-  const [mode, setMode] = useState('file') // 'url' | 'file'
   const [homographyMode, setHomographyMode] = useState('auto')
-  const [debugMode, setDebugMode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [error, setError] = useState('')
+  const [dragging, setDragging] = useState(false)
   const fileRef = useRef()
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragging(false)
+    const dropped = e.dataTransfer.files[0]
+    if (dropped && dropped.type.startsWith('video/')) {
+      setFile(dropped)
+      setError('')
+    } else if (dropped) {
+      setError('Please drop a video file')
+    }
+  }
+
+  const handleDragOver = (e) => { e.preventDefault(); setDragging(true) }
+  const handleDragLeave = (e) => { e.preventDefault(); setDragging(false) }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
 
-    if (mode === 'url') {
-      if (!URL_RE.test(url.trim())) {
-        setError('Enter a valid YouTube URL')
-        return
-      }
-        setLoading(true)
-      setUploadPct(0)
-      try {
-        const { job_id } = await submitGame(url.trim(), label.trim(), debugMode, 'auto')
-        onSubmit({
-          jobId: job_id,
-          source: url.trim(),
-          label: label.trim(),
-          status: 'processing',
-          homographyMode: 'auto',
-        })
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
-    } else {
-      if (!file) {
-        setError('Select a video file')
-        return
-      }
-      setLoading(true)
-      setUploadPct(0)
-      try {
-        const response = await uploadGame(
-          file,
-          label.trim(),
-          setUploadPct,
-          debugMode,
-          homographyMode
-        )
-        onSubmit({
-          jobId: response.job_id,
-          source: file.name,
-          label: label.trim(),
-          status: response.needs_calibration ? 'awaiting_calibration' : 'processing',
-          homographyMode,
-        })
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
+    if (!file) {
+      setError('Select a video file')
+      return
+    }
+    setLoading(true)
+    setUploadPct(0)
+    try {
+      const response = await uploadGame(
+        file,
+        label.trim(),
+        setUploadPct,
+        false,
+        homographyMode
+      )
+      onSubmit({
+        jobId: response.job_id,
+        source: file.name,
+        label: label.trim(),
+        status: response.needs_calibration ? 'awaiting_calibration' : 'processing',
+        homographyMode,
+      })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -83,15 +71,11 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
           <span>water polo game</span>
         </h1>
         <p className="fade-in-delay-3">
-          Upload a game video or paste a YouTube link. Our CV pipeline detects
-          players, tracks formations, and generates tactical analysis — powered by AI.
+          Upload a game video. Our CV pipeline detects players, tracks formations,
+          and generates tactical analysis — powered by AI.
         </p>
 
         <form className="submit-form fade-in-delay-4" onSubmit={handleSubmit}>
-          <div className="mode-toggle">
-            <button type="button" className={mode === 'file' ? 'active' : ''} onClick={() => { setMode('file'); setError('') }}>Upload Video</button>
-            <button type="button" className={mode === 'url' ? 'active' : ''} onClick={() => { setMode('url'); setHomographyMode('auto'); setError('') }}>YouTube URL</button>
-          </div>
           <div className="mode-toggle homography-toggle">
             <button
               type="button"
@@ -103,39 +87,56 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
             <button
               type="button"
               className={homographyMode === 'manual' ? 'active' : ''}
-              onClick={() => mode === 'file' && setHomographyMode('manual')}
-              disabled={mode !== 'file'}
-              title={mode !== 'file' ? 'Manual homography is only available for uploaded videos' : undefined}
+              onClick={() => setHomographyMode('manual')}
             >
               Manual Homography
             </button>
           </div>
-          {mode === 'url' && (
-            <span className="hint-text">Manual homography is available for uploaded videos only in v1.</span>
-          )}
-          {mode === 'file' ? (
-            <div className={`input-group ${error ? 'error' : ''}`}>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="video/*"
-                onChange={(e) => { setFile(e.target.files[0] || null); setError(''); }}
-              />
+          <div
+            className={`file-drop-zone ${dragging ? 'dragging' : ''} ${file ? 'has-file' : ''} ${error ? 'error' : ''}`}
+            onClick={() => fileRef.current.click()}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+          >
+            <input
+              ref={fileRef}
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => { setFile(e.target.files[0] || null); setError(''); }}
+            />
+            <div className="file-drop-icon">
+              {file ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+              ) : (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="m10 8 5 3-5 3V8z" />
+                  <path d="M8 21h8M12 17v4" />
+                </svg>
+              )}
             </div>
-          ) : (
-            <div className={`input-group ${error ? 'error' : ''}`}>
-              <input
-                type="text"
-                placeholder="https://youtube.com/watch?v=..."
-                value={url}
-                onChange={(e) => { setUrl(e.target.value); setError(''); }}
-                autoFocus
-              />
-              <span className="hint-text">Requires local proxy: python local_proxy.py</span>
+            <div className="file-drop-text">
+              {file ? (
+                <>
+                  <span className="file-drop-name">{file.name}</span>
+                  <span className="file-drop-meta">{(file.size / 1024 / 1024).toFixed(1)} MB · click to change</span>
+                </>
+              ) : (
+                <>
+                  <span className="file-drop-label">Drop video here</span>
+                  <span className="file-drop-meta">or click to browse · MP4, MOV, AVI</span>
+                </>
+              )}
             </div>
-          )}
+          </div>
           {error && <span className="error-text">{error}</span>}
-          {mode === 'file' && loading && uploadPct > 0 && (
+          {loading && uploadPct > 0 && (
             <span className="hint-text">Upload {uploadPct}%</span>
           )}
           <div className="label-row">
@@ -146,21 +147,10 @@ export default function HomeView({ games, onSubmit, onOpenGame, onDeleteGame }) 
               onChange={(e) => setLabel(e.target.value)}
             />
           </div>
-          <label className="debug-toggle">
-            <input
-              type="checkbox"
-              checked={debugMode}
-              onChange={(e) => setDebugMode(e.target.checked)}
-            />
-            <span>Debug mode</span>
-            <small>Show live pipeline counts while processing</small>
-          </label>
           <button className="btn-primary" type="submit" disabled={loading}>
             {loading && <span className="spinner" />}
             {loading
-              ? (mode === 'file'
-                ? `Uploading${uploadPct > 0 ? ` ${uploadPct}%` : '...'}`
-                : 'Submitting...')
+              ? `Uploading${uploadPct > 0 ? ` ${uploadPct}%` : '...'}`
               : 'Analyze Game'}
           </button>
         </form>
