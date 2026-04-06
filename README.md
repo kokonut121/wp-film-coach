@@ -1,4 +1,4 @@
-# wp-film-coach
+# Water Polo Game Film Coach
 
 A serverless computer-vision pipeline for water polo tactical analysis. Upload a match video and receive a structured breakdown of player movements, possession phases, formation transitions, and set-piece events — delivered through a React dashboard with an interactive pool map, event timeline, and Claude-powered tactical report.
 
@@ -141,24 +141,3 @@ All files are written under `/results/<job_id>/` in the Modal results volume:
 | `VITE_API_URL` | No | Override the API base URL in the frontend build |
 
 In Modal, `ANTHROPIC_API_KEY` and YouTube cookies are injected as Modal secrets.
-
-## Testing
-
-```bash
-# Core local suite
-pytest tests/test_detect.py tests/test_events.py tests/test_agent.py \
-       tests/test_homography.py tests/test_manual_homography.py tests/test_uploads.py -v
-
-# Single test
-pytest tests/test_events.py::TestTurnoverDetection::test_clear_possession_switch -v
-
-# Integration tests (requires network)
-pytest -m integration -v
-```
-
-## Modal notes
-
-- `results_vol.commit()` is required after any write inside a Modal function
-- `results_vol.reload()` is required before any read in the web app
-- Volume mount points: `RESULTS_DIR = "/results"`, `MODELS_DIR = "/models"`
-- `run_pipeline.spawn(...)` is the async boundary between the web app and the GPU worker
